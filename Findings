@@ -1,1 +1,26 @@
 Incorrect Asset Withdrawal Destination
+An issue was identified in the LendingPool contract's withdraw function, specifically in the _ensureLiquidity(amount) logic. When a user attempts to withdraw an amount that exceeds reserve.reserveAssetAddress liquidity, the function attempts to withdraw from the vault to balance reserve.reserveAssetAddress. However, due to a misdirected transfer, the withdrawn funds are sent to address(this) (the LendingPool contract itself) instead of reserve.reserveAssetAddress. This leads to liquidity mismanagement, failed withdrawals, and potential fund loss
+
+Vulnerability Details
+The withdrawal operation is designed to fetch additional liquidity from the curveVault when the reserve.reserveAssetAddress has insufficient liquidity.
+However, _withdrawFromVault(amount) mistakenly directs the withdrawn funds to address(this), instead of reserve.reserveAssetAddress, causing a liquidity shortfall in the reserve.
+This results in a situation where the lending pool assumes it has sufficient liquidity for user withdrawals, but in reality, the assets remain locked in address(this).
+1. Call the `withdraw` function in the `LendingPool` contract with an amount greater than the available liquidity in the reserve.
+2. The `_ensureLiquidity` function will detect insufficient liquidity and call `_withdrawFromVault` to withdraw the required amount from the Curve vault.
+3. The `_withdrawFromVault` function will withdraw the funds and send them to `address(this)` instead of `reserve.reserveAssetAddress`.
+4. The withdrawn funds will be held by the `LendingPool` contract and will not be added to the reserve's liquidity pool.
+Impact
+The incorrect withdrawal destination can have this consequences:
+
+Liquidity Mismanagement: The lending pool assumes assets are available in reserve.reserveAssetAddress, but they are instead sent to address(this), leading to insufficient liquidity for withdrawals.
+User Withdrawals May Fail: If users attempt to withdraw funds, the contract may revert due to a lack of available liquidity.
+Funds May Become Stuck: If no mechanism exists to transfer funds from address(this) to reserve.reserveAssetAddress, assets could remain locked in the contract, requiring an admin intervention to fix.
+Accounting Inconsistencies: The protocol may incorrectly track available liquidity, potentially affecting calculations related to interest rates and reserve balances.
+Tools Used
+Recommendations
+Modify _withdrawFromVault to ensure funds are correctly sent to reserve.reserveAssetAddress:
+
+function _withdrawFromVault(uint256 amount) internal {
+curveVault.withdraw(amount, reserve.reserveAssetAddress, msg.sender, 0, new address );
+totalVaultDeposits -= amount;
+}
