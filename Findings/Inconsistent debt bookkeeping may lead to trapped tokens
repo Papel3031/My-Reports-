@@ -1,0 +1,53 @@
+Severity
+Impact: Medium
+
+Likelihood: High
+
+Description
+The DebtToken contract implements a debt accounting system where users can burn tokens to repay their debt, including accrued interest. The contract attempts to implement a flexible repayment mechanism that allows users to partially repay their debt and interest.
+
+The issue occurs in the burn() function where the contract attempts to handle cases where a user's repayment amount is less than their accrued interest. The function first calculates amountAfterPaidInterest = amount - scaledBalanceIncrease without checking if amount is greater than scaledBalanceIncrease (the accrued interest). In Solidity versions >=0.8.0, this causes an arithmetic underflow and reverts the transaction when amount < scaledBalanceIncrease.
+
+Proof of Concept
+Consider a user with the following position:
+
+Initial state:
+
+Original debt: 1000 tokens
+
+Accrued interest (scaledBalanceIncrease): 100 tokens
+
+User has 50 tokens available for repayment
+
+User attempts to make a partial repayment:
+
+function burn(uint256 amount) {  // amount = 50
+    // ...
+    uint256 amountAfterPaidInterest = amount - scaledBalanceIncrease;
+    // 50 - 100 causes arithmetic underflow and reverts
+    // Never reaches the else block that should handle this case
+}
+The transaction reverts due to underflow, even though the contract has logic to handle partial interest payments:
+
+} else {
+    // This block should handle amount < scaledBalanceIncrease
+    // but is never reached due to the underflow
+    scaledBalanceIncrease = scaledBalanceIncrease - amount;
+    amountToBurn = 0;
+}
+Recommendations
+Modify the burn function as follows:
+
+        // We pay the interest first, directly reducing the scaled increase
+        uint256 amountToBurn = amount;
+​
+        // If we were able to pay back the interest, we won't have increase in the balance
+        // Instead, we will burn the difference. 
+        if(amount > scaledBalanceIncrease){
+            scaledBalanceIncrease = 0;
+            amountToBurn = amount - scaledBalanceIncrease;
+        } else {
+            // We were not able to pay back the interest, so we can only burn in the debt side and mint the rest
+            scaledBalanceIncrease = scaledBalanceIncrease - amount;
+            amountToBurn = 0;
+        }
