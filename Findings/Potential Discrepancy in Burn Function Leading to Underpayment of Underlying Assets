@@ -1,0 +1,24 @@
+Summary
+This report identifies a potential issue in the burn function https://vscode.dev/github/Cyfrin/2025-02-raac/blob/main/contracts/core/tokens/RToken.sol#L154 of the smart contract, where the amount of underlying assets transferred does not account for accrued interest. This discrepancy could lead to users receiving less than their expected amount when burning tokens.
+
+Vulnerability Details
+The function calculates amountScaled using amount.rayMul(index), which represents the principal plus accrued interest.
+
+However, the underlying asset transfer is performed using amount, rather than amountScaled.
+
+This results in the receiver getting only the principal amount, without the interest accrued over time.
+
+Impact
+Underpayment of Users: Users receive fewer underlying assets than they should, as the accrued interest is not included.
+
+Accounting Inconsistencies: The supply reduction (via _burn()) does not match the underlying asset transfer, potentially leading to an imbalance.
+
+Potential Exploit: Users may be able to game the system by repeatedly burning and repurchasing tokens if there are price or balance discrepancies.
+
+Tools Used
+Recommendations
+Modify the transfer logic to use amountScaled instead of amount to ensure users receive the correct underlying amount:
+
+        if (receiverOfUnderlying != address(this)) {
+            IERC20(_assetAddress).safeTransfer(receiverOfUnderlying, amountScaled);
+        }
