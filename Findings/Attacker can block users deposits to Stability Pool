@@ -1,0 +1,78 @@
+Severity
+Impact: Medium
+
+Likelihood: Medium
+
+Description
+A malicious actor can prevent any user from depositing RToken into the Stability Pool by simply transferring 1 wei of DEToken to them. This attack exploits an inconsistency in how user indexes are managed between DEToken transfers and Stability Pool deposits, causing an arithmetic underflow that reverts the deposit transaction.
+
+The vulnerability stems from a mismatch in user index management between the two contracts:
+
+DEToken: When users receive DEToken via transfer, their _userIndexes is automatically set to the current pool index.
+
+StabilityPool: When calculating interest during deposits, it assumes the DEToken user index is always ≤ the RToken user index.
+
+DEToken._update function:
+
+    function _update(address from, address to, uint256 amount) internal override {
+        ...
+        if(to != address(0) && to != from) {
+            _userDeposits[to] += amount;
+            if(_userIndexes[to] == 0) {
+                _userIndexes[to] = IStabilityPool(stabilityPool).getPoolIndex(); // @audit Sets user index to current pool index
+            } else {
+                // We need to calculate the interest earned to be able to adjust the index
+                uint256 currentIndex = IStabilityPool(stabilityPool).getPoolIndex();
+                ...
+​
+                if(rawInterestAmountToMint > 0) {
+                    _userIndexes[to] = currentIndex; // @audit Sets user index to current pool index
+                    _scaledTotalSupply += rawInterestAmountToMint;
+                    _mint(to, rawInterestAmountToMint);
+                }
+            }
+        }
+        ...
+    }
+StabilityPool._deposit function:
+
+    function _deposit(uint256 rawAmount, uint256 poolIndex) internal {
+        // user current index to calculate the scaled amount
+        uint256 latestUserIndex = uint256(IRToken(rToken).getUserIndex(msg.sender));
+        ...
+        uint256 previousUserIndex = deToken.getUserIndex(msg.sender);
+        uint256 userPreviousIncrease = latestUserIndex - previousUserIndex; // @audit underflow because latestUserIndex < previousUserIndex
+        ...
+​
+        emit Deposit(msg.sender, scaledAmount, scaledAmount);
+    }
+Consider a scenario:
+
+Initial state: Alice wants to deposit RToken into the Stability Pool.
+
+Alice's RToken user index: 1.05e27 (slightly behind current pool index).
+
+Current pool index: 1.06e27.
+
+Alice's DEToken user index: 0 (never received DEToken before).
+
+Attack: Bob (malicious actor) transfers 1 wei of DEToken to Alice.
+
+This triggers DEToken._update.
+
+Alice's DEToken user index is set to: 1.06e27 (current pool index).
+
+Alice attempts to deposit RToken.
+
+latestUserIndex = 1.05e27 (from RToken).
+
+previousUserIndex = 1.06e27 (from DEToken, updated by Bob's transfer).
+
+Calculation: 1.05e27 - 1.06e27 = UNDERFLOW.
+
+Transaction reverts with arithmetic error.
+
+Legitimate users are blocked from depositing RToken to Stability Pool.
+
+Recommendations
+Refactor the Stability._deposit function to handle the case.
